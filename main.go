@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/binary"
-	"flag"
+	"github.com/namsral/flag"
 	"fmt"
 	"github.com/gorilla/mux"
 	"io"
@@ -17,30 +17,40 @@ import (
 	"time"
 )
 
-var rootPath = flag.String("root", "Z:\\", "Path to start scanning from")
-var scanNodesArg = flag.String("folders", "Downloads,Games/switch", "CSV of folders to scan")
-
+var rootPath string
+var scanNodesArg string
 var scanNodes []string
-
-var hostIP = flag.String("ip", "192.168.1.95", "Host IP to display to switch")
-var hostPort = flag.String("port", "8000", "Host Port to display to switch")
+var hostIP string
+var hostPort string
 
 const htmlpage = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Select switch IP to connect to</title><style>p, #switch {font-size: 8vw;}button{width:100%;height: 80px;background-color: #EFA6A2;font-size: 3vw;}</style></head>
 <body><p>select switch IP to connect to</p><form action="#" method="post"><input type="text" id="switch" name="switch" value="192.168.1.17"><button type="submit">go</button></form></body></html>`
 
+
+func readArgs() {
+	flagset := flag.NewFlagSetWithEnvPrefix(os.Args[0], "GOFOIL", 0)
+
+	flagset.StringVar(&rootPath, "root", "Z:\\", "Root path for files to serve")
+	flagset.StringVar(&scanNodesArg, "folders", "Downloads,Games/switch", "Comma-separated list of folders to scan")
+	flagset.StringVar(&hostIP, "ip", "0.0.0.0", "IP address to bind server to.")
+	flagset.StringVar(&hostPort, "port", "8000", "Port to open http server on.")
+	flagset.Parse(os.Args[1:])
+}
+
 func main() {
-	initFlags()
+
+	readArgs()
 	r := mux.NewRouter()
 	r.Use(loggingMiddleware)
 	r.HandleFunc("/", HomeHandler)
 
-	r.PathPrefix("/files/").Handler(http.StripPrefix("/files/", http.FileServer(http.Dir(*rootPath))))
+	r.PathPrefix("/files/").Handler(http.StripPrefix("/files/", http.FileServer(http.Dir(rootPath))))
 
-	log.Printf("Starting server at %s:%s, with root %s + %s", *hostIP, *hostPort, *rootPath, *scanNodesArg)
+	log.Printf("Starting server at %s:%s, with root %s + %s", hostIP, hostPort, rootPath, scanNodesArg)
 
 	srv := &http.Server{
 		Handler: r,
-		Addr:    *hostIP + ":" + *hostPort,
+		Addr:    hostIP + ":" + hostPort,
 		// Good practice: enforce timeouts for servers you create!
 		// But here the switch will be downloading file, slowly...
 		//WriteTimeout: 15 * time.Second,
@@ -51,11 +61,6 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
-}
-func initFlags() {
-	flag.Parse()
-	scanNodes = strings.Split(*scanNodesArg, ",")
-	log.SetOutput(os.Stdout)
 }
 
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +92,7 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	length := 0
 	// Find NSP files within the scanNodes list of directories
 	for _, node := range scanNodes {
-		err := filepath.Walk(*rootPath+node, func(path string, info os.FileInfo, err error) error {
+		err := filepath.Walk(rootPath+node, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -97,9 +102,9 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 			case ".nsz":
 				fallthrough
 			case ".xci":
-				relPath := strings.TrimPrefix(path, *rootPath)
+				relPath := strings.TrimPrefix(path, rootPath)
 				relPath = strings.Replace(relPath, "\\", "/", -1) // Remove ugly windows \ seperator
-				finalPath := fmt.Sprintf("%s:%s/files/%s\n", *hostIP, *hostPort, url.PathEscape(relPath))
+				finalPath := fmt.Sprintf("%s:%s/files/%s\n", &hostIP, &hostPort, url.PathEscape(relPath))
 				files = append(files, finalPath)
 				length += len(finalPath)
 			}
