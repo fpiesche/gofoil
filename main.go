@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,35 +17,40 @@ import (
 )
 
 var rootPath string
-var scanNodesArg string
-var scanNodes []string
+var switchHostsArg string
+var switchHosts []string
 var hostIP string
 var hostPort string
-
-const htmlpage = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Select switch IP to connect to</title><style>p, #switch {font-size: 8vw;}button{width:100%;height: 80px;background-color: #EFA6A2;font-size: 3vw;}</style></head>
-<body><p>select switch IP to connect to</p><form action="#" method="post"><input type="text" id="switch" name="switch" value="192.168.1.17"><button type="submit">go</button></form></body></html>`
+var externalHost string
+var externalPort string
+var pollInterval int
 
 
 func readArgs() {
 	flagset := flag.NewFlagSetWithEnvPrefix(os.Args[0], "GOFOIL", 0)
 
-	flagset.StringVar(&rootPath, "root", "Z:\\", "Root path for files to serve")
-	flagset.StringVar(&scanNodesArg, "folders", "Downloads,Games/switch", "Comma-separated list of folders to scan")
+	flagset.StringVar(&rootPath, "root", "/games", "Root path for files to serve")
+	flagset.StringVar(&switchHostsArg, "switchhosts", "localhost", "IP addresses or host names for Switches to check.")
 	flagset.StringVar(&hostIP, "ip", "0.0.0.0", "IP address to bind server to.")
 	flagset.StringVar(&hostPort, "port", "8000", "Port to open http server on.")
+	flagset.StringVar(&externalHost, "externalhost", "0.0.0.0", "External IP address or host name to create download links on.")
+	flagset.StringVar(&externalPort, "externalport", "8000", "The port the web server can be reached from the outside at.")
+	flagset.IntVar(&pollInterval, "pollinterval", 2, "How often to poll for the presence of Switches.")
 	flagset.Parse(os.Args[1:])
+	switchHosts = strings.Split(switchHostsArg, ",")
 }
+
 
 func main() {
 
 	readArgs()
 	r := mux.NewRouter()
-	r.Use(loggingMiddleware)
-	r.HandleFunc("/", HomeHandler)
-
+	r.HandleFunc("/healthcheck", HealthcheckHandler)
 	r.PathPrefix("/files/").Handler(http.StripPrefix("/files/", http.FileServer(http.Dir(rootPath))))
 
-	log.Printf("Starting server at %s:%s, with root %s + %s", hostIP, hostPort, rootPath, scanNodesArg)
+	log.Printf("Starting server at %s:%s.", hostIP, hostPort)
+	log.Printf("Games root path: %s", rootPath)
+	log.Printf("Switch hosts to poll: %s", switchHostsArg)
 
 	srv := &http.Server{
 		Handler: r,
@@ -57,115 +61,83 @@ func main() {
 		//ReadTimeout:  15 * time.Second,
 	}
 
+	go pollForSwitches()
+
 	err := srv.ListenAndServe()
 	if err != nil {
 		log.Panic(err)
 	}
 }
 
-func HomeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		// Display web page to choose switch ip
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(htmlpage))
-		return
-	} else if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusNotImplemented)
-		return
-	}
+func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusCreated)
+}
 
-	err := r.ParseForm()
-	if err != nil {
-		log.Printf("could not parse form: %v", err)
-		w.WriteHeader(500)
-		return
+func pollForSwitches() {
+	poll := time.Tick(2 * time.Second)
+    for _ = range poll {
+		for _, switchHost := range switchHosts {
+			conn, err := net.Dial("tcp", switchHost + ":2000")
+			if err == nil {
+				log.Printf("Connected to Switch at %s", switchHost)
+				defer conn.Close()
+				sendFileList(conn)
+			}
+		}
 	}
-	destination := r.Form.Get("switch")
-	if destination == "" {
-		log.Printf("switch destination ip empty: %v", err)
-		w.WriteHeader(400)
-		return
-	}
-	log.Printf("contacting switch at ip %s", destination)
+}
+
+func getFileList() ([]string, int) {
 
 	files := []string{}
 	length := 0
+
 	// Find NSP files within the scanNodes list of directories
-	for _, node := range scanNodes {
-		err := filepath.Walk(rootPath+node, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			switch filepath.Ext(info.Name()) {
-			case ".nsp":
-				fallthrough
-			case ".nsz":
-				fallthrough
-			case ".xci":
-				relPath := strings.TrimPrefix(path, rootPath)
-				relPath = strings.Replace(relPath, "\\", "/", -1) // Remove ugly windows \ seperator
-				finalPath := fmt.Sprintf("%s:%s/files/%s\n", &hostIP, &hostPort, url.PathEscape(relPath))
-				files = append(files, finalPath)
-				length += len(finalPath)
-			}
-			return nil
-		})
+	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			log.Printf("could not scan folders: %v", err)
-			w.WriteHeader(500)
-			return
+			log.Printf("Failed to process %s: %s", path, err)
+			return nil
 		}
-	}
+		if info.IsDir() {
+			return nil
+		}
 
-	// create socket connection to switch
-	conn, err := net.Dial("tcp", destination+":2000")
+		switch filepath.Ext(info.Name()) {
+		case ".nsp", ".nsz", ".xci":
+			relPath := strings.TrimPrefix(path, rootPath+"/")
+			fileURL := fmt.Sprintf("%s:%s/files/%s\n", externalHost, externalPort, url.PathEscape(relPath))
+			files = append(files, fileURL)
+			length += len(fileURL)
+		default:
+			log.Printf("Ignoring %s - unknown file extension.", path)
+		}
+		return nil
+	})
 	if err != nil {
-		log.Printf("Can't connect to switch: %v", err)
-		w.WriteHeader(500)
-		return
+		log.Printf("could not scan folders: %v", err)
+		return nil, 0
 	}
 
-	defer conn.Close()
-
-	sendNSPList(files, conn, length)
-
-	buff := make([]byte, 1024)
-	for n, err := conn.Read(buff); n < 0 && err != nil; {
-		log.Println("rcv")
-		time.Sleep(time.Millisecond * 10)
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(htmlpage))
-	log.Printf("All files sent!")
+	log.Printf("Found %v files total.", len(files))
+	return files, length
 }
 
-// Taken from : https://github.com/bycEEE/tinfoilusbgo/blob/master/main.go. Adapted to work for network (bigEndian)
-// sendNSPList creates a payload out of an NSPList struct and sends it to the switch.
-func sendNSPList(fileList []string, out io.Writer, length int) {
+func sendFileList(out io.Writer) {
+	fileList, length := getFileList()
 
+	log.Printf("Sending file list...")
+
+	// Taken from : https://github.com/bycEEE/tinfoilusbgo/blob/master/main.go. Adapted to work for network (bigEndian)
+	// sendNSPList creates a payload out of an NSPList struct and sends it to the switch.
 	buf := make([]byte, 4)
 	binary.BigEndian.PutUint32(buf, uint32(length)) // NSP list length
 	out.Write(buf)
-
-	fmt.Printf("Sending NSP list: %v\n", fileList)
 
 	for _, path := range fileList {
 		buf = make([]byte, len(path))
 		copy(buf, path) // File path followed by newline
 		out.Write(buf)
 	}
-}
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dump, err := httputil.DumpRequest(r, false)
-		if err != nil {
-			log.Printf("could not dump request: %v", err)
-			log.Printf("%s : %s", r.RequestURI, r.Header.Get("Range"))
-		}
-		log.Println(string(dump))
-		// Call the next handler, which can be another middleware in the chain, or the final handler.
-		next.ServeHTTP(w, r)
-	})
+	log.Printf("File list sent.")
 }

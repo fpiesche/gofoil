@@ -16,6 +16,7 @@ VOLUME [ "/games" ]
 ENV GOFOIL_IP="0.0.0.0" \
     GOFOIL_PORT="8000" \
     GOFOIL_ROOT="/games" \
-    GOFOIL_FOLDERS="."
+    GOFOIL_EXTERNALHOST="localhost" \
+    GOFOIL_EXTERNALPORT="8000"
 
 CMD [ "/bin/gofoil" ]
