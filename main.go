@@ -45,7 +45,7 @@ func main() {
 
 	readArgs()
 	r := mux.NewRouter()
-	r.HandleFunc("/healthcheck", HealthcheckHandler)
+	r.HandleFunc("/", HealthcheckHandler)
 	r.PathPrefix("/files/").Handler(http.StripPrefix("/files/", http.FileServer(http.Dir(rootPath))))
 
 	log.Printf("Starting server at %s:%s.", hostIP, hostPort)
