@@ -19,10 +19,8 @@ import (
 var rootPath string
 var switchHostsArg string
 var switchHosts []string
-var hostIP string
-var hostPort string
-var externalHost string
-var externalPort string
+var listenAddress string
+var externalAddress string
 var pollInterval int
 
 
@@ -31,10 +29,8 @@ func readArgs() {
 
 	flagset.StringVar(&rootPath, "root", "/games", "Root path for files to serve")
 	flagset.StringVar(&switchHostsArg, "switchhosts", "localhost", "IP addresses or host names for Switches to check.")
-	flagset.StringVar(&hostIP, "ip", "0.0.0.0", "IP address to bind server to.")
-	flagset.StringVar(&hostPort, "port", "8000", "Port to open http server on.")
-	flagset.StringVar(&externalHost, "externalhost", "0.0.0.0", "External IP address or host name to create download links on.")
-	flagset.StringVar(&externalPort, "externalport", "8000", "The port the web server can be reached from the outside at.")
+	flagset.StringVar(&listenAddress, "listenaddress", "0.0.0.0:8000", "IP address to bind server to.")
+	flagset.StringVar(&externalAddress, "externaladdress", "0.0.0.0:8000", "External IP address or host name to create download links on.")
 	flagset.IntVar(&pollInterval, "pollinterval", 2, "How often to poll for the presence of Switches.")
 	flagset.Parse(os.Args[1:])
 	switchHosts = strings.Split(switchHostsArg, ",")
@@ -48,13 +44,13 @@ func main() {
 	r.HandleFunc("/", HealthcheckHandler)
 	r.PathPrefix("/files/").Handler(http.StripPrefix("/files/", http.FileServer(http.Dir(rootPath))))
 
-	log.Printf("Starting server at %s:%s.", hostIP, hostPort)
+	log.Printf("Starting server at %s, external address %s.", listenAddress, externalAddress)
 	log.Printf("Games root path: %s", rootPath)
 	log.Printf("Switch hosts to poll: %s", switchHostsArg)
 
 	srv := &http.Server{
 		Handler: r,
-		Addr:    hostIP + ":" + hostPort,
+		Addr:    listenAddress,
 		// Good practice: enforce timeouts for servers you create!
 		// But here the switch will be downloading file, slowly...
 		//WriteTimeout: 15 * time.Second,
@@ -105,7 +101,7 @@ func getFileList() ([]string, int) {
 		switch filepath.Ext(info.Name()) {
 		case ".nsp", ".nsz", ".xci":
 			relPath := strings.TrimPrefix(path, rootPath+"/")
-			fileURL := fmt.Sprintf("%s:%s/files/%s\n", externalHost, externalPort, url.PathEscape(relPath))
+			fileURL := fmt.Sprintf("%s/files/%s\n", externalAddress, url.PathEscape(relPath))
 			files = append(files, fileURL)
 			length += len(fileURL)
 		default:
