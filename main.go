@@ -74,7 +74,7 @@ func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func pollForSwitches() {
-	poll := time.Tick(2 * time.Second)
+	poll := time.Tick(time.Second * time.Duration(pollInterval))
     for _ = range poll {
 		for _, switchHost := range switchHosts {
 			conn, err := net.Dial("tcp", switchHost + ":2000")
