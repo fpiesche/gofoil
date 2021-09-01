@@ -2,9 +2,10 @@ package main
 
 import (
 	"encoding/binary"
-	"github.com/namsral/flag"
 	"fmt"
+	"github.com/forestgiant/sliceutil"
 	"github.com/gorilla/mux"
+	"github.com/namsral/flag"
 	"io"
 	"log"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -23,6 +25,13 @@ var listenAddress string
 var externalAddress string
 var pollInterval int
 
+func TinfoilExtensions() []string {
+	return []string{".nsp", ".nsz", ".xci"}
+}
+
+func FBIExtensions() []string {
+	return []string{".cia", ".tik"}
+}
 
 func readArgs() {
 	flagset := flag.NewFlagSetWithEnvPrefix(os.Args[0], "GOFOIL", 0)
@@ -57,7 +66,9 @@ func main() {
 		//ReadTimeout:  15 * time.Second,
 	}
 
-	go pollForSwitches()
+	for _, switchHost := range switchHosts {
+		go pollForTinfoil(switchHost)
+	}
 
 	err := srv.ListenAndServe()
 	if err != nil {
@@ -69,26 +80,24 @@ func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func pollForSwitches() {
+func pollForTinfoil(switchHost string) {
 	poll := time.Tick(time.Second * time.Duration(pollInterval))
-    for _ = range poll {
-		for _, switchHost := range switchHosts {
-			conn, err := net.Dial("tcp", switchHost + ":2000")
-			if err == nil {
-				log.Printf("Connected to Switch at %s", switchHost)
-				defer conn.Close()
-				sendFileList(conn)
-			}
+	for _ = range poll {
+		conn, err := net.DialTimeout("tcp", switchHost + ":2000", time.Second * time.Duration(pollInterval - 1))
+		if err == nil {
+			log.Printf("%s: found Tinfoil at %s", switchHost, conn.RemoteAddr())
+			defer conn.Close()
+			files, length := getFileList(rootPath, TinfoilExtensions())
+			sendFileList(conn, files, length)
 		}
 	}
 }
 
-func getFileList() ([]string, int) {
+func getFileList(rootPath string, extensions []string) ([]string, int) {
 
 	files := []string{}
 	length := 0
 
-	// Find NSP files within the scanNodes list of directories
 	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Printf("Failed to process %s: %s", path, err)
@@ -97,15 +106,11 @@ func getFileList() ([]string, int) {
 		if info.IsDir() {
 			return nil
 		}
-
-		switch filepath.Ext(info.Name()) {
-		case ".nsp", ".nsz", ".xci":
+		if sliceutil.Contains(extensions, filepath.Ext(info.Name())) {
 			relPath := strings.TrimPrefix(path, rootPath+"/")
 			fileURL := fmt.Sprintf("%s/files/%s\n", externalAddress, url.PathEscape(relPath))
 			files = append(files, fileURL)
 			length += len(fileURL)
-		default:
-			log.Printf("Ignoring %s - unknown file extension.", path)
 		}
 		return nil
 	})
@@ -114,26 +119,21 @@ func getFileList() ([]string, int) {
 		return nil, 0
 	}
 
-	log.Printf("Found %v files total.", len(files))
+	sort.Strings(files)
 	return files, length
 }
 
-func sendFileList(out io.Writer) {
-	fileList, length := getFileList()
-
-	log.Printf("Sending file list...")
-
+func sendFileList(out io.Writer, fileList []string, fileListLength int) {
 	// Taken from : https://github.com/bycEEE/tinfoilusbgo/blob/master/main.go. Adapted to work for network (bigEndian)
-	// sendNSPList creates a payload out of an NSPList struct and sends it to the switch.
+	// Start sending with length of file list in bytes
 	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, uint32(length)) // NSP list length
+	binary.BigEndian.PutUint32(buf, uint32(fileListLength))
 	out.Write(buf)
 
+	// Then send the file list line by line
 	for _, path := range fileList {
 		buf = make([]byte, len(path))
-		copy(buf, path) // File path followed by newline
+		copy(buf, path)
 		out.Write(buf)
 	}
-
-	log.Printf("File list sent.")
 }
