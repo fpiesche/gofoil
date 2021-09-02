@@ -69,7 +69,7 @@ func main() {
 
 	log.Printf("Starting server at %s, external address %s.", listenAddress, externalAddress)
 	log.Printf("Source file root path: %s", rootPath)
-	log.Printf("Hosts to poll: %s", clientHostsArg)
+	log.Printf("Hosts to poll: %s", clientsArg)
 
 	srv := &http.Server{ Handler: r, Addr: listenAddress }
 
