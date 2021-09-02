@@ -1,6 +1,6 @@
-# Containerised sftp server
+# Gofoil: Tinfoil/FBI server
 
-![build](https://github.com/fpiesche/gofoil/actions/workflows/main.yml/badge.svg)
+![build](https://github.com/fpiesche/gofoil/actions/workflows/build.yaml/badge.svg)
 
 Gofoil is a fork of [`Orygin/gofoil`](https://github.cm/Orygin/gofoil) with added functionality to
 make it function for multiple target clients and both Tinfoil and FBI installers.
