@@ -19,30 +19,44 @@ import (
 )
 
 var rootPath string
-var switchHostsArg string
-var switchHosts []string
+var clientHostsArg string
+var clientHosts []string
 var listenAddress string
 var externalAddress string
 var pollInterval int
 
-func TinfoilExtensions() []string {
-	return []string{".nsp", ".nsz", ".xci"}
+type clientappSettings struct {
+	name string
+	rcvPort string
+	extensions []string
 }
 
-func FBIExtensions() []string {
-	return []string{".cia", ".tik"}
+func clientApps() map[string]clientappSettings {
+	return map[string]clientappSettings{
+		"Tinfoil": clientappSettings{
+			name: "Tinfoil",
+			rcvPort: "2000",
+			extensions: []string{".nsp", ".nsz", ".xci"}},
+		"FBI": clientappSettings{
+			name: "FBI",
+			rcvPort: "5000",
+			extensions: []string{".cia", ".tik"}},
+	}
 }
+
 
 func readArgs() {
 	flagset := flag.NewFlagSetWithEnvPrefix(os.Args[0], "GOFOIL", 0)
 
 	flagset.StringVar(&rootPath, "root", "/games", "Root path for files to serve")
-	flagset.StringVar(&switchHostsArg, "switchhosts", "localhost", "IP addresses or host names for Switches to check.")
+	flagset.StringVar(&clientHostsArg, "clienthosts", "localhost",
+					  "Comma-separated addresses for hosts to poll for Tinfoil or FBI.")
 	flagset.StringVar(&listenAddress, "listenaddress", "0.0.0.0:8000", "IP address to bind server to.")
-	flagset.StringVar(&externalAddress, "externaladdress", "0.0.0.0:8000", "External IP address or host name to create download links on.")
-	flagset.IntVar(&pollInterval, "pollinterval", 2, "How often to poll for the presence of Switches.")
+	flagset.StringVar(&externalAddress, "externaladdress", "0.0.0.0:8000",
+					  "Address and port for clients to connect to the server under.")
+	flagset.IntVar(&pollInterval, "pollinterval", 2, "How often to poll the target hosts.")
 	flagset.Parse(os.Args[1:])
-	switchHosts = strings.Split(switchHostsArg, ",")
+	clientHosts = strings.Split(clientHostsArg, ",")
 }
 
 
@@ -55,19 +69,15 @@ func main() {
 
 	log.Printf("Starting server at %s, external address %s.", listenAddress, externalAddress)
 	log.Printf("Games root path: %s", rootPath)
-	log.Printf("Switch hosts to poll: %s", switchHostsArg)
+	log.Printf("Hosts to poll: %s", clientHostsArg)
 
 	srv := &http.Server{
 		Handler: r,
-		Addr:    listenAddress,
-		// Good practice: enforce timeouts for servers you create!
-		// But here the switch will be downloading file, slowly...
-		//WriteTimeout: 15 * time.Second,
-		//ReadTimeout:  15 * time.Second,
+		Addr: listenAddress
 	}
 
-	for _, switchHost := range switchHosts {
-		go pollForTinfoil(switchHost)
+	for _, clientHostname := range targetHosts {
+		go pollHost(clientHostname)
 	}
 
 	err := srv.ListenAndServe()
@@ -80,15 +90,18 @@ func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func pollForTinfoil(switchHost string) {
+func pollHost(targetHost string) {
 	poll := time.Tick(time.Second * time.Duration(pollInterval))
 	for _ = range poll {
-		conn, err := net.DialTimeout("tcp", switchHost + ":2000", time.Second * time.Duration(pollInterval - 1))
-		if err == nil {
-			log.Printf("%s: found Tinfoil at %s", switchHost, conn.RemoteAddr())
-			defer conn.Close()
-			files, length := getFileList(rootPath, TinfoilExtensions())
-			sendFileList(conn, files, length)
+		for name, settings := range clientApps() {
+			conn, err := net.DialTimeout("tcp", targetHost + ":" + settings.rcvPort,
+										 time.Second * time.Duration(pollInterval - 1))
+			if err == nil {
+				log.Printf("%s: found %s at %s", targetHost, name, conn.RemoteAddr())
+				defer conn.Close()
+				files, length := getFileList(rootPath, settings.extensions)
+				sendFileList(conn, files, length)
+			}
 		}
 	}
 }
