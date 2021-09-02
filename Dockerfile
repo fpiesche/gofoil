@@ -11,10 +11,10 @@ FROM alpine:3.14.2
 COPY --from=builder /build/gofoil /bin/gofoil
 
 EXPOSE 8000
-VOLUME [ "/games" ]
+VOLUME [ "/files" ]
 
 ENV GOFOIL_LISTENADDRESS="0.0.0.0:8000" \
     GOFOIL_EXTERNALADDRESS="localhost:8000" \
-    GOFOIL_ROOT="/games"
+    GOFOIL_ROOT="/files"
 
 CMD [ "/bin/gofoil" ]
