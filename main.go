@@ -19,7 +19,7 @@ import (
 )
 
 var rootPath string
-var clientHostsArg string
+var clientsArg string
 var clientHosts []string
 var listenAddress string
 var externalAddress string
@@ -48,15 +48,15 @@ func clientApps() map[string]clientappSettings {
 func readArgs() {
 	flagset := flag.NewFlagSetWithEnvPrefix(os.Args[0], "GOFOIL", 0)
 
-	flagset.StringVar(&rootPath, "root", "/games", "Root path for files to serve")
-	flagset.StringVar(&clientHostsArg, "clienthosts", "localhost",
-					  "Comma-separated addresses for hosts to poll for Tinfoil or FBI.")
+	flagset.StringVar(&rootPath, "root", "/files", "Root path for files to serve")
+	flagset.StringVar(&clientsArg, "clients", "localhost",
+					  "Comma-separated network addresses to poll for Tinfoil or FBI.")
 	flagset.StringVar(&listenAddress, "listenaddress", "0.0.0.0:8000", "IP address to bind server to.")
 	flagset.StringVar(&externalAddress, "externaladdress", "0.0.0.0:8000",
 					  "Address and port for clients to connect to the server under.")
 	flagset.IntVar(&pollInterval, "pollinterval", 2, "How often to poll the target hosts.")
 	flagset.Parse(os.Args[1:])
-	clientHosts = strings.Split(clientHostsArg, ",")
+	clientHosts = strings.Split(clientsArg, ",")
 }
 
 
@@ -68,15 +68,12 @@ func main() {
 	r.PathPrefix("/files/").Handler(http.StripPrefix("/files/", http.FileServer(http.Dir(rootPath))))
 
 	log.Printf("Starting server at %s, external address %s.", listenAddress, externalAddress)
-	log.Printf("Games root path: %s", rootPath)
+	log.Printf("Source file root path: %s", rootPath)
 	log.Printf("Hosts to poll: %s", clientHostsArg)
 
-	srv := &http.Server{
-		Handler: r,
-		Addr: listenAddress
-	}
+	srv := &http.Server{ Handler: r, Addr: listenAddress }
 
-	for _, clientHostname := range targetHosts {
+	for _, clientHostname := range clientHosts {
 		go pollHost(clientHostname)
 	}
 
